@@ -91,7 +91,7 @@ CONNECTIONS = {}
 ENGINE_KEY = '%(username)s-%(connector_name)s'
 URL_PATTERN = '(?P<driver_name>.+?://)(?P<host>[^:/ ]+):(?P<port>[0-9]*).*'
 
-LOG = logging.getLogger(__name__)
+LOG = logging.getLogger()
 
 # How many rows to keep in memory to be able to start a query over without relaunching it
 # (Default chosen quite arbitrarily)
