@@ -115,6 +115,9 @@ def get(user, query_server=None, cluster=None):
       LOG.error("No healthy nodes in consul %s" % consul)
   # ---------------------------------------------------------------------------
 
+  if not query_server.get('auth_username'):
+    query_server['auth_username'] = user.username
+
   DBMS_CACHE_LOCK.acquire()
   try:
     DBMS_CACHE.setdefault(user.id, {})
@@ -379,8 +382,8 @@ def get_query_server_config_via_connector(connector):
       'server_host': server_host,
       'server_port': server_port,
       'principal': 'TODO',
-      'auth_username': AUTH_USERNAME.get(),
-      'auth_password': AUTH_PASSWORD.get(),
+      'auth_username': None,
+      'auth_password': '',
 
       'impersonation_enabled': impersonation_enabled,
       'use_sasl': str(compute['options'].get('use_sasl', True)).upper() == 'TRUE',
