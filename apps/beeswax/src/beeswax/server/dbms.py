@@ -115,7 +115,9 @@ def get(user, query_server=None, cluster=None):
       LOG.error("No healthy nodes in consul %s" % consul)
   # ---------------------------------------------------------------------------
 
-  if not query_server.get('auth_username'):
+  # if the auth_username is not set then we attempt to set using the current user
+  # this is likely to be the case when using connectors/computes
+  if not query_server.get('auth_username') and user and user.username:
     query_server['auth_username'] = user.username
 
   DBMS_CACHE_LOCK.acquire()
@@ -381,6 +383,8 @@ def get_query_server_config_via_connector(connector):
       'server_name': compute_name,
       'server_host': server_host,
       'server_port': server_port,
+      # For connectors/computes, the auth details are not available
+      # from configs and needs patching before submitting requests
       'principal': 'TODO',
       'auth_username': None,
       'auth_password': '',
