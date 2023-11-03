@@ -132,7 +132,7 @@
 
 <div id="jHueNotify" class="alert hide">
   <button class="close">&times;</button>
-  <div class="message"></div>
+  <div class="message"></div> 
 </div>
 
 
@@ -147,6 +147,7 @@ ${ hueIcons.symbols() }
 
   <div class="main-page">
     <AppBanner data-reactcomponent='AppBanner'></AppBanner>
+    <AlertComponent data-reactcomponent='AlertComponent' ></AlertComponent> 
 
     <nav class="navbar navbar-default">
       <div class="navbar-inner top-nav">
