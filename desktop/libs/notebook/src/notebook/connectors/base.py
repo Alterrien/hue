@@ -450,8 +450,8 @@ def get_api(request, snippet):
   interface = interpreter['interface']
 
   # reconstruct 'custom' interpreter.
-  if snippet.get('type') and snippet.get('type') == 'custom': 
-    interface = snippet.get('interface') 
+  if snippet.get('type') and snippet.get('type') == 'custom':
+    interface = snippet.get('interface')
     interpreter['options'] = snippet.get('options')
 
   LOG.debug('Selected interpreter %s interface=%s compute=%s' % (
@@ -493,6 +493,9 @@ def get_api(request, snippet):
     elif interpreter['options'] and interpreter['options'].get('url', '').find('vertica') >= 0:
       from notebook.connectors.jdbc_vertica import JdbcApiVertica
       return JdbcApiVertica(request.user, interpreter=interpreter,  request=request)
+    elif interpreter['options'] and interpreter['options'].get('driver', '').find('kyuubi') >= 0:
+      from notebook.connectors.jdbc_kyuubi import JdbcApiKyuubi
+      return JdbcApiKyuubi(request.user, interpreter=interpreter)
     else:
       from notebook.connectors.jdbc import JdbcApi
       return JdbcApi(request.user, interpreter=interpreter, request=request)
