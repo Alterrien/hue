@@ -17,8 +17,6 @@
 
 import re
 import sys
-import threading
-import time
 import random
 
 import requests
@@ -77,7 +75,6 @@ from desktop.lib.django_util import format_preserving_redirect
 from desktop.lib.exceptions_renderable import PopupException
 from desktop.lib.parameterization import substitute_variables
 from desktop.lib.view_util import location_to_url
-from desktop.models import Cluster
 from desktop.settings import CACHES_HIVE_DISCOVERY_KEY
 from indexer.file_format import HiveFormat
 from libzookeeper import conf as libzookeeper_conf
