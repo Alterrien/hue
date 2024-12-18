@@ -16,7 +16,7 @@
 
 <%!
   import sys
-
+  import json
   from desktop import conf
   from desktop.views import commonheader, commonfooter, commonshare, commonimportexport, _ko
   from filebrowser.conf import SHOW_UPLOAD_BUTTON
@@ -758,7 +758,7 @@ ${ commonheader(_("Importer"), "indexer", user, request, "60px") | n,unicode }
               <!-- ko if: tableFormat() != 'kudu' && $root.createWizard.source.inputFormat() != 'rdbms' -->
               <div class="inline-table">
                 <div class="form-inline" data-bind="foreach: partitionColumns">
-                  <a class="pointer pull-right margin-top-20" data-bind="click: function() { 
+                  <a class="pointer pull-right margin-top-20" data-bind="click: function() {
                     $parent.partitionColumns.remove($data);
                     window.hueAnalytics.log('importer', 'remove-partiction-btn-click');
                   }"><i class="fa fa-minus"></i></a>
@@ -1133,7 +1133,7 @@ ${ commonheader(_("Importer"), "indexer", user, request, "60px") | n,unicode }
       <!-- /ko -->
 
       <!-- ko if: currentStep() == 1 -->
-      <button class="btn" data-bind="enable: !createWizard.isGuessingFormat() && createWizard.source.show(), click: function() { 
+      <button class="btn" data-bind="enable: !createWizard.isGuessingFormat() && createWizard.source.show(), click: function() {
         currentStep(2);
         window.hueAnalytics.log('importer', 'next-btn-click/' +  createWizard?.source?.inputFormat());
         }">
@@ -2465,11 +2465,6 @@ ${ commonheader(_("Importer"), "indexer", user, request, "60px") | n,unicode }
           self.outputFormat(newValue || 'table');
         },0);
         if (newValue === 'database') {
-          // Criteo default value: Hive db location is under the user space
-          if (vm.sourceType == 'hive') {
-            self.useDefaultLocation(false);
-            self.nonDefaultLocation('/user/${ user.username }/hive');
-          }
           vm.currentStep(2);
         } else {
           vm.currentStep(1);
@@ -2513,12 +2508,7 @@ ${ commonheader(_("Importer"), "indexer", user, request, "60px") | n,unicode }
             name = wizard.prefill.target_path();
           }
         } else if (wizard.source.inputFormat() === 'manual') {
-          // Criteo default value: Hive db name is f_lastname
-          if (wizard.prefill.target_type() == 'database') {
-            name = '${ user.username }'.replace('.', '_');
-          } else {
-            name = wizard.prefill.target_path().length > 0 ? wizard.prefill.target_path() + '.' : '';
-          }
+          name = wizard.prefill.target_path().length > 0 ? wizard.prefill.target_path() + '.' : '';
         }
 
         return name.replace(/ /g, '_').toLowerCase();
@@ -2666,7 +2656,7 @@ ${ commonheader(_("Importer"), "indexer", user, request, "60px") | n,unicode }
       self.importData = ko.observable(true);
       self.importData.subscribe(function(val) {
         window.hueAnalytics.log('importer', 'import-data/' + val);
-      })      
+      })
       self.useDefaultLocation = ko.observable(true);
       self.useDefaultLocation.subscribe(function(val) {
         window.hueAnalytics.log('importer', 'default-location/' + val);
@@ -2681,7 +2671,7 @@ ${ commonheader(_("Importer"), "indexer", user, request, "60px") | n,unicode }
       self.isTransactional = ko.observable(self.isTransactionalVisible());
       self.isTransactional.subscribe(function(val) {
         window.hueAnalytics.log('importer', 'is-transactional/' + val);
-      })   
+      })
       self.isInsertOnly = ko.observable(true); // Impala doesn't have yet full support.
       self.isTransactionalUpdateEnabled = ko.pureComputed(function() {
         var enabled = self.tableFormat() == 'orc' && (vm.sourceType == 'hive' || (vm.sourceType == 'impala' && transactionalDefaultType.length && transactionalDefaultType != 'insert_only'));
@@ -2879,7 +2869,7 @@ ${ commonheader(_("Importer"), "indexer", user, request, "60px") | n,unicode }
         var isValidColumnNames = self.destination.columns().every(function (column) {
           return /^[a-zA-Z0-9_]+$/.test(column.name());
         });
-  
+
         var validTableColumns = self.destination.outputFormat() !== 'table' || ($.grep(self.destination.columns(), function(column) {
             return column.name().length === 0;
           }).length === 0
@@ -3365,7 +3355,7 @@ ${ commonheader(_("Importer"), "indexer", user, request, "60px") | n,unicode }
             message: "${ _('This file is empty, please select another file.') }"
           });
         }
-        else if (file_size > 200 * 1024) {          
+        else if (file_size > 200 * 1024) {
           huePubSub.publish('hue.global.warning', {
             message: "${ _('File size exceeds the supported size (200 KB). Please use the S3, ABFS or HDFS browser to upload files.') }"
           });
@@ -3419,6 +3409,8 @@ ${ commonheader(_("Importer"), "indexer", user, request, "60px") | n,unicode }
     });
   })();
 </script>
+
+<script src="${ static('desktop/js/importer-inline.js') }" type="text/javascript"></script>
 </span>
 
 %if not is_embeddable:
