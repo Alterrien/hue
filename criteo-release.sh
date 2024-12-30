@@ -9,12 +9,10 @@ cd $DIR
 NEXUS_URL="http://nexus.criteo.prod/content/repositories/criteo.thirdparty/com/cloudera/hue"
 VERSION="DUMMY-FOR-CI"
 source VERSION
-ORIGINAL_VERSION=$VERSION
 GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 LAST_COMMIT_ID=$(git rev-parse --short HEAD)
 DATE=$(date -u +%Y%m%d%H%M%S)
-VERSION=$ORIGINAL_VERSION+$DATE.$LAST_COMMIT_ID
-sed -i "s/$ORIGINAL_VERSION/$VERSION/g" VERSION
+CRITEO_VERSION=$VERSION+$DATE.$LAST_COMMIT_ID
 
 # Build release environment Docker image
 docker build . -t hue-dev -f tools/docker/dev/Dockerfile
@@ -23,25 +21,24 @@ docker build . -t hue-dev -f tools/docker/dev/Dockerfile
 docker run --rm --volume $PWD:/data --workdir /data --user $(id -u):$(id -g) hue-dev make prod
 
 # Build static files
-pushd
-cd build/static
-tar czf hue-static-"$VERSION".tar.gz .
+pushd build
+tar czf hue-static-"$VERSION".tgz static/
 popd
 
 # Release to Nexus
 if [ ! -z $MAVEN_PASSWORD ]; then
-    curl -v -u "$MAVEN_USER:$MAVEN_PASSWORD" --upload-file build/release/prod/hue-*.tgz ${NEXUS_URL}/hue/$VERSION/hue-$VERSION.tgz
-    curl -v -u "$MAVEN_USER:$MAVEN_PASSWORD" --upload-file build/static/hue-static*.tgz ${NEXUS_URL}/hue-static/$VERSION/hue-static-$VERSION.tgz
+    curl -v -u "$MAVEN_USER:$MAVEN_PASSWORD" --upload-file build/release/prod/hue-*.tgz ${NEXUS_URL}/hue/$CRITEO_VERSION/hue-$CRITEO_VERSION.tgz
+    curl -v -u "$MAVEN_USER:$MAVEN_PASSWORD" --upload-file build/static/hue-static*.tgz ${NEXUS_URL}/hue-static/$CRITEO_VERSION/hue-static-$CRITEO_VERSION.tgz
     cat << EOF > maven-metadata-hue.xml
 <?xml version="1.0" encoding="UTF-8"?>
 <metadata>
   <groupId>com.cloudera.hue</groupId>
   <artifactId>hue</artifactId>
   <versioning>
-    <latest>$VERSION</latest>
-    <release>$VERSION</release>
+    <latest>$CRITEO_VERSION</latest>
+    <release>$CRITEO_VERSION</release>
     <versions>
-      <version>$VERSION</version>
+      <version>$CRITEO_VERSION</version>
     </versions>
     <lastUpdated>$DATE</lastUpdated>
   </versioning>
@@ -53,10 +50,10 @@ EOF
   <groupId>com.cloudera.hue</groupId>
   <artifactId>hue-static</artifactId>
   <versioning>
-    <latest>$VERSION</latest>
-    <release>$VERSION</release>
+    <latest>$CRITEO_VERSION</latest>
+    <release>$CRITEO_VERSION</release>
     <versions>
-      <version>$VERSION</version>
+      <version>$CRITEO_VERSION</version>
     </versions>
     <lastUpdated>$DATE</lastUpdated>
   </versioning>
