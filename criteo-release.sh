@@ -21,8 +21,8 @@ docker build . -t hue-dev -f tools/docker/dev/Dockerfile
 docker run --rm --volume $PWD:/data --workdir /data --user $(id -u):$(id -g) hue-dev make prod
 
 # Build static files
-pushd build/static
-tar czf hue-static-"$VERSION".tar.gz .
+pushd build
+tar czf hue-static-"$VERSION".tgz static/
 popd
 
 # Release to Nexus
