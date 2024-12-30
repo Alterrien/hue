@@ -13,7 +13,7 @@ ORIGINAL_VERSION=$VERSION
 GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 LAST_COMMIT_ID=$(git rev-parse --short HEAD)
 DATE=$(date -u +%Y%m%d%H%M%S)
-VERSION=$GIT_BRANCH-$DATE-$LAST_COMMIT_ID
+VERSION=$ORIGINAL_VERSION+$DATE.$LAST_COMMIT_ID
 sed -i "s/$ORIGINAL_VERSION/$VERSION/g" VERSION
 
 # Build release environment Docker image
