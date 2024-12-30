@@ -44,12 +44,12 @@ declare global {
 }
 
 export interface hueWindow {
-  AUTOCOMPLETE_TIMEOUT?: number;
   CACHEABLE_TTL?: { default?: number; sqlAnalyzer?: number };
   CLOSE_SESSIONS?: { [dialect: string]: boolean };
   CUSTOM_DASHBOARD_URL?: string;
   DEV?: boolean;
   DISABLE_LOCAL_STORAGE?: boolean;
+  ENABLE_HELP_MENU?: boolean;
   ENABLE_PREDICT?: boolean;
   ENABLE_SQL_SYNTAX_CHECK?: boolean;
   HAS_CATALOG?: boolean;
@@ -59,7 +59,6 @@ export interface hueWindow {
   HUE_LANG?: string;
   HUE_VERSION?: string;
   LOGGED_USERNAME?: string;
-  SHOW_ADD_MORE_EDITORS?: boolean;
   SQL_ANALYZER_MODE?: string;
   USER_IS_ADMIN?: boolean;
   USER_IS_HUE_ADMIN?: boolean;

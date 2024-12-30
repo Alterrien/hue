@@ -21,3 +21,78 @@ export interface FileSystem {
   icon: JSX.Element;
   user_home_dir: string;
 }
+
+export interface FileStats {
+  atime: number;
+  blockSize: number;
+  group: string;
+  mode: number;
+  mtime: number;
+  path: string;
+  replication: number;
+  rwx: string;
+  size: number;
+  type: string;
+  user: string;
+}
+
+export interface StorageDirectoryTableData
+  extends Pick<FileStats, 'path' | 'user' | 'group' | 'type' | 'replication'> {
+  name: string;
+  size: string;
+  permission: string;
+  mtime: string;
+}
+
+export interface PageStats {
+  number: number;
+  num_pages: number;
+  previous_page_number: number;
+  next_page_number: number;
+  start_index: number;
+  end_index: number;
+  total_count: number;
+}
+
+export interface FilePreview {
+  contents: string;
+  compression?: string;
+  end: number;
+  length: number;
+  mode: string;
+  offset: number;
+}
+
+export interface ListDirectory {
+  files: FileStats[];
+  page: PageStats;
+  groups: string[];
+  users: string[];
+  supergroup: string;
+  superuser: string;
+  is_fs_superuser: boolean;
+  is_trash_enabled: boolean;
+}
+
+export interface ContentSummary {
+  directoryCount: number;
+  ecPolicy: string;
+  fileCount: number;
+  length: number;
+  quota: number;
+  spaceConsumed: number;
+  spaceQuota: number;
+  typeQuota: number;
+  replication: number;
+}
+
+export enum SortOrder {
+  ASC = 'ascending',
+  DSC = 'descending',
+  NONE = 'none'
+}
+
+export enum BrowserViewType {
+  dir = 'dir',
+  file = 'file'
+}

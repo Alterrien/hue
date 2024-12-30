@@ -14,17 +14,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import Modal from 'antd/lib/modal/Modal';
-import { Menu, Spin } from 'antd';
+import { Col, Menu, Row, Spin, Button } from 'antd';
 
 import HdfsIcon from '../../../components/icons/HdfsIcon';
 import S3Icon from '../../../components/icons/S3Icon';
 import AdlsIcon from '../../../components/icons/AdlsIcon';
 
-import { fetchFileSystems } from '../api';
+import { ApiFileSystem, FILESYSTEMS_API_URL } from '../api';
 import { FileSystem } from '../types';
 import './FileChooserModal.scss';
+import PathBrowser from '../../PathBrowser/PathBrowser';
+import useLoadData from '../../../utils/hooks/useLoadData';
+
 interface FileProps {
   show: boolean;
   onCancel: () => void;
@@ -35,8 +38,7 @@ interface FileProps {
 const defaultProps = { title: 'Choose a file', okText: 'Select' };
 
 const FileChooserModal: React.FC<FileProps> = ({ show, onCancel, title, okText }) => {
-  const [fileSystemList, setFileSystemList] = useState<FileSystem[] | undefined>();
-  const [loading, setLoading] = useState(true);
+  const [filePath, setFilePath] = useState<string | undefined>();
 
   const icons = {
     hdfs: <HdfsIcon />,
@@ -44,42 +46,31 @@ const FileChooserModal: React.FC<FileProps> = ({ show, onCancel, title, okText }
     s3: <S3Icon />
   };
 
-  const handleOk = () => {
-    //temporary until the file is selected through the file chooser component
-    onCancel();
-  };
+  //temporary until the file is selected through the file chooser component
+  const handleOk = onCancel;
+  const handleCancel = onCancel;
 
-  const handleCancel = () => {
-    onCancel();
-  };
+  const { data: fileSystemsData, loading: loadingFilesSystem } =
+    useLoadData<ApiFileSystem[]>(FILESYSTEMS_API_URL);
 
-  const onPathChange = e => {
-    //TODO: Use fileSystemList[e.key].user_home_dir to retrieve files
-  };
+  const fileSystemList: FileSystem[] | undefined = useMemo(
+    () =>
+      fileSystemsData?.map((system, index) => {
+        return {
+          label: system.file_system,
+          key: index,
+          icon: icons[system.file_system],
+          user_home_dir: system.user_home_directory
+        };
+      }),
+    [fileSystemsData]
+  );
 
   useEffect(() => {
-    if (show && !fileSystemList) {
-      setLoading(true);
-      fetchFileSystems()
-        .then(fileSystems => {
-          const fileSystemsObj = fileSystems.map((system, index) => {
-            return {
-              label: system.file_system,
-              key: index,
-              icon: icons[system.file_system],
-              user_home_dir: system.user_home_directory
-            };
-          });
-          setFileSystemList(fileSystemsObj);
-        })
-        .catch(error => {
-          //TODO: Properly handle errors.
-        })
-        .finally(() => {
-          setLoading(false);
-        });
+    if (fileSystemsData && fileSystemsData?.length !== 0) {
+      setFilePath(fileSystemsData[0].user_home_directory);
     }
-  }, [show]);
+  }, [fileSystemsData]);
 
   return (
     <Modal
@@ -89,10 +80,40 @@ const FileChooserModal: React.FC<FileProps> = ({ show, onCancel, title, okText }
       onCancel={handleCancel}
       okText={okText}
       width={930}
-      className="file-chooser__modal"
+      className="hue-file-chooser__modal"
     >
-      <Spin spinning={loading}>
-        <Menu items={fileSystemList} onSelect={onPathChange} className="file-system__panel"></Menu>
+      <Spin spinning={loadingFilesSystem}>
+        <Row>
+          <Col span={5}>
+            <Menu
+              items={fileSystemList}
+              onSelect={selectedMenuItem => {
+                setFilePath(fileSystemList?.[selectedMenuItem.key].user_home_dir);
+              }}
+              className="hue-file-system__panel"
+            ></Menu>
+          </Col>
+          <Col span={19}>
+            <Row className="hue-path-browser-panel" onClick={e => e.stopPropagation()}>
+              <Col span={18}>
+                {filePath && (
+                  <PathBrowser
+                    filePath={filePath}
+                    onFilepathChange={setFilePath}
+                    seperator={'>'}
+                    showIcon={true}
+                  />
+                )}
+              </Col>
+              <Col span={3}>
+                <Button className="hue-path-browser-panel__button">New Folder</Button>
+              </Col>
+              <Col span={3}>
+                <Button className="hue-path-browser-panel__button">Upload</Button>
+              </Col>
+            </Row>
+          </Col>
+        </Row>
       </Spin>
     </Modal>
   );

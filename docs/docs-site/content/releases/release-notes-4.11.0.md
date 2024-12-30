@@ -10,36 +10,40 @@ tags: ['skipIndexing']
 
 Hue is an open source SQL Cloud Assistant for querying [Databases & Data Warehouses](https://docs.gethue.com/administrator/configuration/connectors/): [gethue.com](https://gethue.com)
 
-**Note: This is the last Hue release supporting Python2.7. From future releases, Hue will support Python3.8+**
+**Note: Hue 4.11 is the last release to support Python 2.7. New releases will be based on Python 3.8 and higher.**
 
 ### Summary
 
-Here is a summary of the [main improvements](https://gethue.com/categories/version-4.11/) of 4.11 on top of the previous [4.10](https://gethue.com/blog/hue-4-10-sql-scratchpad-component-rest-api-small-file-importer-slack-app/) release:
+#### Ability to import and query Iceberg tables from Hue
+
+Apache Iceberg is a high-performance table format and extends multifunction analytics to a petabyte scale for multi-cloud and hybrid use cases. You can now create an Iceberg table using the Hue Importer.
+
+We've also updated the autocomplete and syntax checker for Hive and Impala to support the latest Iceberg syntax when you write queries.
+
+For more information, see [Creating Iceberg tables in Hue](https://gethue.com/blog/2022-10-11-creating-iceberg-tables-in-hue/).
+
+![Iceberg-Hue integration](https://cdn.gethue.com/uploads/2022/10/iceberg1.gif).
 
 
-#### Supporting Iceberg Syntax in Hue importer
+#### SparkSQL improvements
 
-Apache Iceberg is a high-performance format for huge analytic tables. Now you can create a Iceberg Table through Hue importer.
-We’ve also updated the autocomplete and syntax checker for Hive and Impala to support the latest Iceberg syntax.
+Hue leverages Apache Livy 3 to support Spark SQL queries in Hue on the Apache Spark 3 engine. Booting a new Livy session was slow, and took around 30-45s. Hue now caches the session details per user for a faster query experience. Caching session details also helps in autocompleting databases, tables, and column names, improving the search experience.
 
-Read more about the [Creating Iceberg tables in Hue](https://gethue.com/blog/2022-10-11-creating-iceberg-tables-in-hue/).
+Hue automatically cleans up unused Livy sessions.
 
-![Iceberg Hue integration](https://cdn.gethue.com/uploads/2022/10/iceberg1.gif)
+Hue has a dedicated autocomplete and syntax checker for Spark SQL. Hue supports all Spark SQL statement types, up-to-date with version 3.3.1.
 
+We've also integrated the UDF library for Spark SQL in the autocomplete code, as well as in the right assist panel. The inline help includes all built-in functions of Spark SQL 3.3.1.
 
-#### SparkSQL Support
-
-We now have a dedicated autocomplete and syntax checker available for Spark SQL! It supports all Spark SQL statement types up to date with version 3.3.1.
-
-On top of this we’ve also included the UDF library for Spark SQL, accessible in the autocomplete as well as the right assist panel. It covers documentation of the built in functions of Spark SQL 3.3.1.
+![functioning SparkSQL query editor](https://cdn.gethue.com/uploads/2023/01/sparksql_left_right_assist.gif)
 
 
-#### HPL/SQL Support
+#### Added support for HPL/SQL
 
-HPL/SQL is an Apache open source procedural extension for SQL for Hive users. It has its own grammar. It is included with Apache Hive from version 2.0. 
+HPL/SQL is an Apache open source procedural extension for SQL for Hive users. It has its own grammar. It is included with Apache Hive from version 2.0.
 
-You can enable the HPL/SQL dialect via desktop/conf/hue.ini config file section.
-        
+You can enable the HPL/SQL dialect by adding the following lines in the desktop/conf/hue.ini configuration file:
+
         [notebook]
         [[interpreters]]
         [[[hplsql]]]
@@ -51,7 +55,7 @@ Read more about the [HPL/SQL Support](https://gethue.com/blog/2022-02-01-hplsql-
 ![Example](https://cdn.gethue.com/uploads/2022/02/Hplsql_example1.png)
 
 
-#### Tech stack & Tooling
+#### Improvements to the tech stack and tooling
 
 - [Create SQL tables from excel files](https://gethue.com/blog/2021-11-15-create-sql-tables-from-execl-files/)
 - [Access your data in ABFS without any credential keys](https://gethue.com/blog/2021-09-21-access-your-data-in-abfs-without-any-credential-keys/)
@@ -68,7 +72,7 @@ Go grab it and give it a spin!
 
 * Docker
     ```
-    docker run -it -p 8888:8888 gethue/4.11.0
+    docker run -it -p 8888:8888 gethue/hue:4.11.0
     ```
 * Kubernetes :
     ```

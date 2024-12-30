@@ -27,6 +27,7 @@ import waitForVariable from 'utils/timing/waitForVariable';
 import getParameter from 'utils/url/getParameter';
 import getSearchParameter from 'utils/url/getSearchParameter';
 import { ASSIST_GET_DATABASE_EVENT, ASSIST_GET_SOURCE_EVENT } from 'ko/components/assist/events';
+import { GLOBAL_ERROR_TOPIC } from 'reactComponents/GlobalAlert/events';
 
 class OnePageViewModel {
   constructor() {
@@ -59,7 +60,7 @@ class OnePageViewModel {
           waitForObservable(viewModel.selectedNotebook, () => {
             if (viewModel.editorType() !== type) {
               viewModel.selectedNotebook().selectedSnippet(type);
-              if (!window.ENABLE_NOTEBOOK_2) {
+              if (!window.ENABLE_HUE_5) {
                 viewModel.editorType(type);
               }
               viewModel.newNotebook(type);
@@ -176,38 +177,6 @@ class OnePageViewModel {
       loadedCss.push($(this).attr('href'));
     });
 
-    const loadScript = function (scriptUrl) {
-      const deferred = $.Deferred();
-      $.ajax({
-        url: scriptUrl,
-        converters: {
-          'text script': function (text) {
-            return text;
-          }
-        }
-      })
-        .done(contents => {
-          loadedJs.push(scriptUrl);
-          deferred.resolve({ url: scriptUrl, contents: contents });
-        })
-        .fail(() => {
-          deferred.resolve('');
-        });
-      return deferred.promise();
-    };
-
-    const loadScripts = function (scriptUrls) {
-      const promises = [];
-      while (scriptUrls.length) {
-        const scriptUrl = scriptUrls.shift();
-        if (loadedJs.indexOf(scriptUrl) !== -1) {
-          continue;
-        }
-        promises.push(loadScript(scriptUrl));
-      }
-      return promises;
-    };
-
     const addGlobalCss = function ($el) {
       const cssFile = $el.attr('href').split('?')[0];
       if (loadedCss.indexOf(cssFile) === -1) {
@@ -222,12 +191,56 @@ class OnePageViewModel {
       $el.remove();
     };
 
+    self.scriptQueue = [];
+    self.currentlyLoadingScript = false;
+
+    self.loadScript_nonce = function (scriptSrc) {
+      const deferred = $.Deferred();
+
+      self.scriptQueue.push({ scriptSrc, deferred });
+
+      const loadNextScript = function () {
+        if (self.currentlyLoadingScript || self.scriptQueue.length === 0) {
+          // Either a script is currently being loaded or no scripts are left to load
+          return;
+        }
+
+        // Get and remove the first script from the queue
+        const { scriptSrc, deferred } = self.scriptQueue.shift();
+        self.currentlyLoadingScript = true;
+
+        const script = document.createElement('script');
+        script.type = 'text/javascript';
+        script.src = scriptSrc;
+        script.onload = script.onerror = function () {
+          // Clean up
+          document.body.removeChild(script);
+          // Resolve the promise for this script
+          deferred.resolve();
+          // Mark as no longer loading so the next script can load
+          self.currentlyLoadingScript = false;
+          // Attempt to load the next script
+          loadNextScript();
+        };
+        document.body.appendChild(script);
+      };
+
+      loadNextScript(); // Start loading if no other scripts are currently being loaded
+      return deferred.promise();
+    };
+
     // Only load CSS and JS files that are not loaded before
     self.processHeaders = function (response) {
       const promise = $.Deferred();
       const $rawHtml = $('<span>').html(response);
 
       const $allScripts = $rawHtml.find('script[src]');
+
+      const $jsonScript = $rawHtml.find("script[type='application/json']");
+      $jsonScript.each(function () {
+        document.head.appendChild(this);
+      });
+
       const scriptsToLoad = $allScripts
         .map(function () {
           return $(this).attr('src');
@@ -236,7 +249,7 @@ class OnePageViewModel {
       $allScripts.remove();
 
       $rawHtml.find('link[href]').each(function () {
-        addGlobalCss($(this)); // Also removes the elements;
+        addGlobalCss($(this));
       });
 
       $rawHtml.find('a[href]').each(function () {
@@ -246,6 +259,36 @@ class OnePageViewModel {
         }
         $(this).attr('href', link);
       });
+
+      const loadScript = function (scriptUrl) {
+        const deferred = $.Deferred();
+        $.ajax({
+          url: scriptUrl,
+          converters: {
+            'text script': text => text
+          }
+        })
+          .done(contents => {
+            loadedJs.push(scriptUrl);
+            deferred.resolve({ url: scriptUrl, contents });
+          })
+          .fail(() => {
+            deferred.resolve('');
+          });
+        return deferred.promise();
+      };
+
+      const loadScripts = function (scriptUrls) {
+        const promises = [];
+        while (scriptUrls.length) {
+          const scriptUrl = scriptUrls.shift();
+          if (loadedJs.indexOf(scriptUrl) !== -1) {
+            continue;
+          }
+          promises.push(loadScript(scriptUrl));
+        }
+        return promises;
+      };
 
       const scriptPromises = loadScripts(scriptsToLoad);
 
@@ -260,12 +303,45 @@ class OnePageViewModel {
             evalScriptSync();
           });
         } else {
-          // All evaluated
           promise.resolve($rawHtml.children());
         }
       };
 
       evalScriptSync();
+      return promise;
+    };
+
+    self.processHeadersSecure = function (response) {
+      const promise = $.Deferred();
+      const $rawHtml = $('<span>').html(response);
+
+      // Since we're not executing scripts here, we simply collect them
+      const $allScripts = $rawHtml.find('script[src]');
+      const scriptsToLoad = $allScripts
+        .map(function () {
+          return $(this).attr('src');
+        })
+        .toArray();
+
+      // Remove the script elements to avoid duplicating them when $rawHtml is inserted into the document
+      $allScripts.remove();
+
+      // Process other elements (link, a, etc.)
+      $rawHtml.find('link[href]').each(function () {
+        addGlobalCss($(this)); // Also removes the element
+      });
+
+      $rawHtml.find('a[href]').each(function () {
+        let link = $(this).attr('href');
+        if (link.startsWith('/') && !link.startsWith('/hue')) {
+          link = window.HUE_BASE_URL + '/hue' + link;
+        }
+        $(this).attr('href', link);
+      });
+
+      // Pass the array of script sources along with $rawHtml to the calling code
+      promise.resolve({ $rawHtml: $rawHtml, scriptsToLoad: scriptsToLoad });
+
       return promise;
     };
 
@@ -383,17 +459,38 @@ class OnePageViewModel {
               window.clearAppIntervals(app);
               huePubSub.clearAppSubscribers(app);
               self.extraEmbeddableURLParams('');
-
-              self.processHeaders(response).done($rawHtml => {
-                if (window.SKIP_CACHE.indexOf(app) === -1) {
-                  self.embeddable_cache[app] = $rawHtml;
-                }
-                $('#embeddable_' + app).html($rawHtml);
-                huePubSub.publish('app.dom.loaded', app);
-                window.setTimeout(() => {
-                  self.isLoadingEmbeddable(false);
-                }, 0);
-              });
+              const currentPath = window.location.pathname; // Retrieve the current path from the window location
+              const basePath = currentPath.split('=')[0];
+              const inlineScriptsUrls = ['oozie', 'beeswax', 'jobbrowser', 'jobsub', 'logs'].some(
+                segment => basePath.includes(segment)
+              );
+              if (inlineScriptsUrls) {
+                self.processHeaders(response).done($rawHtml => {
+                  if (window.SKIP_CACHE.indexOf(app) === -1) {
+                    self.embeddable_cache[app] = $rawHtml;
+                  }
+                  $('#embeddable_' + app).html($rawHtml);
+                  huePubSub.publish('app.dom.loaded', app);
+                  window.setTimeout(() => {
+                    self.isLoadingEmbeddable(false);
+                  }, 0);
+                });
+              } else {
+                self.processHeadersSecure(response).done(({ $rawHtml, scriptsToLoad }) => {
+                  if (window.SKIP_CACHE.indexOf(app) === -1) {
+                    self.embeddable_cache[app] = $rawHtml;
+                  }
+                  $('#embeddable_' + app).html($rawHtml);
+                  // Now load the scripts
+                  const loadScripts = scriptsToLoad.map(src => self.loadScript_nonce(src)); // Assumes loadScript_nonce is defined somewhere
+                  Promise.all(loadScripts).then(() => {
+                    huePubSub.publish('app.dom.loaded', app);
+                    window.setTimeout(() => {
+                      self.isLoadingEmbeddable(false);
+                    }, 0);
+                  });
+                });
+              }
             } else {
               if (type.indexOf('json') > -1) {
                 const presponse = JSON.parse(response);
@@ -412,11 +509,11 @@ class OnePageViewModel {
             } else if (app !== '500') {
               self.loadApp('500');
             } else {
-              $.jHueNotify.error(
-                I18n(
+              huePubSub.publish(GLOBAL_ERROR_TOPIC, {
+                message: I18n(
                   'It looks like you are offline or an unknown error happened. Please refresh the page.'
                 )
-              );
+              });
             }
           }
         });
@@ -533,15 +630,6 @@ class OnePageViewModel {
       },
       { url: '/desktop/dump_config', app: 'dump_config' },
       {
-        url: '/desktop/debug/threads',
-        app: function () {
-          self.loadApp('threads');
-          self.getActiveAppViewModel(viewModel => {
-            viewModel.fetchThreads();
-          });
-        }
-      },
-      {
         url: '/gist',
         app: function () {
           const uuid = getUrlParameter('uuid');
@@ -555,6 +643,12 @@ class OnePageViewModel {
           self.getActiveAppViewModel(viewModel => {
             viewModel.fetchMetrics();
           });
+        }
+      },
+      {
+        url: '/task_server',
+        app: function () {
+          self.loadApp('taskserver');
         }
       },
       {
@@ -597,7 +691,7 @@ class OnePageViewModel {
                   self.isLoadingEmbeddable(true);
                   viewModel
                     .openNotebook(getUrlParameter('editor'))
-                    [window.ENABLE_NOTEBOOK_2 ? 'finally' : 'always'](() => {
+                    [window.ENABLE_HUE_5 ? 'finally' : 'always'](() => {
                       self.isLoadingEmbeddable(false);
                     });
                 });
@@ -691,11 +785,9 @@ class OnePageViewModel {
           if (notebookId !== '') {
             self.getActiveAppViewModel(viewModel => {
               self.isLoadingEmbeddable(true);
-              viewModel
-                .openNotebook(notebookId)
-                [window.ENABLE_NOTEBOOK_2 ? 'finally' : 'always'](() => {
-                  self.isLoadingEmbeddable(false);
-                });
+              viewModel.openNotebook(notebookId)[window.ENABLE_HUE_5 ? 'finally' : 'always'](() => {
+                self.isLoadingEmbeddable(false);
+              });
             });
           } else {
             self.getActiveAppViewModel(viewModel => {
@@ -869,16 +961,13 @@ class OnePageViewModel {
 
     huePubSub.subscribe('open.link', href => {
       if (href) {
-        const prefix = '/hue';
         if (href.startsWith('/')) {
-          if (window.HUE_BASE_URL.length && href.startsWith(window.HUE_BASE_URL)) {
-            page(href);
-          } else if (href.startsWith(prefix)) {
+          if (window.HUE_BASE_URL && !href.startsWith(window.HUE_BASE_URL)) {
             page(window.HUE_BASE_URL + href);
           } else {
-            page(window.HUE_BASE_URL + prefix + href);
+            page(href); // Already includes the base_url
           }
-        } else if (href.indexOf('#') == 0) {
+        } else if (href.indexOf('#') === 0) {
           // Only place that seem to use this is hbase onclick row
           window.location.hash = href;
         } else {
@@ -889,36 +978,44 @@ class OnePageViewModel {
       }
     });
 
-    huePubSub.subscribe('open.filebrowserlink', ({ pathPrefix, decodedPath, fileBrowserModel }) => {
-      if (pathPrefix.includes('download=')) {
-        // The download view on the backend requires the slashes not to
-        // be encoded in order for the file to be correctly named.
-        const encodedPath = encodeURIComponent(decodedPath).replaceAll('%2F', '/');
-        const possibleKnoxUrlPathPrefix = window.HUE_BASE_URL;
-        window.location = possibleKnoxUrlPathPrefix + pathPrefix + encodedPath;
-        return;
-      }
+    huePubSub.subscribe(
+      'open.filebrowserlink',
+      ({ pathPrefix, decodedPath, fileBrowserModel, browserTarget }) => {
+        if (pathPrefix.includes('download=')) {
+          // The download view on the backend requires the slashes not to
+          // be encoded in order for the file to be correctly named.
+          const encodedPath = encodeURIComponent(decodedPath).replaceAll('%2F', '/');
+          const possibleKnoxUrlPathPrefix = window.HUE_BASE_URL;
+          window.location = possibleKnoxUrlPathPrefix + pathPrefix + encodedPath;
+          return;
+        }
 
-      const appPrefix = '/hue';
-      const urlEncodedPercentage = '%25';
-      // Fix. The '%' character needs to be encoded twice due to a bug in the page library
-      // that decodes the url twice. Even when we don't directly call pag() we still need this
-      // fix since the user can reload the page which will trigger a call to page().
-      const pageFixedEncodedPath = encodeURIComponent(
-        decodedPath.replaceAll('%', urlEncodedPercentage)
-      );
-      const href = window.HUE_BASE_URL + appPrefix + pathPrefix + pageFixedEncodedPath;
+        const appPrefix = '/hue';
+        const urlEncodedPercentage = '%25';
+        // Fix. The '%' character needs to be encoded twice due to a bug in the page library
+        // that decodes the url twice. Even when we don't directly call page() we still need this
+        // fix since the user can reload the page which will trigger a call to page().
+        const pageFixedEncodedPath = encodeURIComponent(
+          decodedPath.replaceAll('%', urlEncodedPercentage)
+        );
+        const href = window.HUE_BASE_URL + appPrefix + pathPrefix + pageFixedEncodedPath;
 
-      // We don't want reload the entire filebrowser when navigating between folders
-      // and already on the listdir_components page.
-      if (fileBrowserModel) {
-        fileBrowserModel.targetPath(pathPrefix + encodeURIComponent(decodedPath));
-        window.history.pushState(null, '', href);
-        fileBrowserModel.retrieveData();
-      } else {
-        page(href);
+        if (browserTarget) {
+          window.open(href, browserTarget);
+          return;
+        }
+
+        // We don't want reload the entire filebrowser when navigating between folders
+        // and already on the listdir_components page.
+        if (fileBrowserModel) {
+          fileBrowserModel.targetPath(pathPrefix + encodeURIComponent(decodedPath));
+          window.history.pushState(null, '', href);
+          fileBrowserModel.retrieveData();
+        } else {
+          page(href);
+        }
       }
-    });
+    );
   }
 }
 

@@ -14,6 +14,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import { AxiosResponseTransformer } from 'axios';
+
 import { Tags } from './GeneralDataCatalog';
 import { Cancellable, CancellablePromise } from 'api/cancellablePromise';
 import {
@@ -61,17 +63,17 @@ interface SampleFetchOptions extends SharedFetchOptions {
 }
 
 const ADD_TAGS_URL = '/metadata/api/catalog/add_tags';
-const AUTOCOMPLETE_URL_PREFIX = '/api/editor/autocomplete/';
-const CANCEL_STATEMENT_URL = '/api/editor/cancel_statement';
-const CHECK_STATUS_URL = '/api/editor/check_status';
-const CLOSE_STATEMENT_URL = '/api/editor/close_statement';
+const AUTOCOMPLETE_URL_PREFIX = '/api/v1/editor/autocomplete/';
+const CANCEL_STATEMENT_URL = '/api/v1/editor/cancel_statement';
+const CHECK_STATUS_URL = '/api/v1/editor/check_status';
+const CLOSE_STATEMENT_URL = '/api/v1/editor/close_statement';
 const DELETE_TAGS_URL = '/metadata/api/catalog/delete_tags';
-const DESCRIBE_URL = '/api/editor/describe/';
-const FETCH_RESULT_DATA_URL = '/api/editor/fetch_result_data';
+const DESCRIBE_URL = '/api/v1/editor/describe/';
+const FETCH_RESULT_DATA_URL = '/api/v1/editor/fetch_result_data';
 const FIND_ENTITY_URL = '/metadata/api/catalog/find_entity';
 const LIST_TAGS_URL = '/metadata/api/catalog/list_tags';
 const METASTORE_TABLE_URL_PREFIX = '/metastore/table/';
-const SAMPLE_URL_PREFIX = '/api/editor/sample/';
+const SAMPLE_URL_PREFIX = '/api/v1/editor/sample/';
 const SEARCH_URL = '/desktop/api/search/entities';
 const UPDATE_PROPERTIES_URL = '/metadata/api/catalog/update_properties';
 
@@ -106,7 +108,7 @@ const performAnalyze = ({
     });
     try {
       const analyzeResponse = await post<DefaultApiResponse & { watch_url?: string }>(
-        `/api/${
+        `/api/v1/${
           entry.getConnector().id === 'hive' ? 'beeswax' : entry.getConnector().id
         }/analyze/${getEntryUrlPath(entry)}`,
         undefined,
@@ -204,7 +206,7 @@ export const fetchNamespaces = (
   connector: Connector,
   silenceErrors?: boolean
 ): CancellablePromise<Record<string, Namespace[]> & { dynamicClusters?: boolean }> =>
-  get(`/api/get_namespaces/${connector.id}`, undefined, { silenceErrors });
+  get(`/api/v1/get_namespaces/${connector.id}`, undefined, { silenceErrors });
 
 export const fetchNavigatorMetadata = ({
   entry,
@@ -506,13 +508,7 @@ export const fetchSample = ({
           queryResult.result.handle.has_result_set = resultStatus.has_result_set;
         }
         snippetJson = JSON.stringify(queryResult);
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-ignore
-        const transformResponse = (response: unknown) => {
-          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          // @ts-ignore
-          return JSON.bigdataParse(response);
-        };
+        const transformResponse: AxiosResponseTransformer = response => JSON.bigdataParse(response);
         const resultPromise = post<SampleResponse>(
           FETCH_RESULT_DATA_URL,
           {

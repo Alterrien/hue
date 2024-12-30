@@ -49,50 +49,38 @@ Each URL is mapped to one engine and should be created once per process.
 Each query statement grabs a connection from the engine and will return it after its close().
 Disposing the engine closes all its connections.
 '''
-from future import standard_library
-standard_library.install_aliases()
 
-from builtins import next, object
-import datetime
-import json
-import logging
-import uuid
 import re
 import sys
+import json
+import uuid
+import logging
+import datetime
 import threading
 import textwrap
-
 from string import Template
+from urllib.parse import parse_qs as urllib_parse_qs, quote_plus as urllib_quote_plus, urlparse as urllib_urlparse
 
 from django.core.cache import caches
-from sqlalchemy import create_engine, inspect, Table, MetaData
-from sqlalchemy.exc import OperationalError, UnsupportedCompilationError, CompileError, ProgrammingError, NoSuchTableError
+from django.utils.translation import gettext as _
+from past.builtins import long
+from sqlalchemy import MetaData, Table, create_engine, inspect
+from sqlalchemy.exc import CompileError, NoSuchTableError, OperationalError, ProgrammingError, UnsupportedCompilationError
 
+from beeswax import data_export
 from desktop.lib import export_csvxls
 from desktop.lib.i18n import force_unicode
-from beeswax import data_export
 from librdbms.server import dbms
-
-from notebook.connectors.base import Api, QueryError, QueryExpired, _get_snippet_name, AuthenticationRequired
+from notebook.connectors.base import Api, AuthenticationRequired, QueryError, QueryExpired, _get_snippet_name
 from notebook.models import escape_rows
-
-if sys.version_info[0] > 2:
-  from urllib.parse import quote_plus as urllib_quote_plus
-  from past.builtins import long
-  from io import StringIO
-  from django.utils.translation import gettext as _
-else:
-  from django.utils.translation import ugettext as _
-  from urllib import quote_plus as urllib_quote_plus
-  from cStringIO import StringIO
-
 
 ENGINES = {}
 CONNECTIONS = {}
 ENGINE_KEY = '%(username)s-%(connector_name)s'
 URL_PATTERN = '(?P<driver_name>.+?://)(?P<host>[^:/ ]+):(?P<port>[0-9]*).*'
 
-LOG = logging.getLogger(__name__)
+
+LOG = logging.getLogger()
 
 # How many rows to keep in memory to be able to start a query over without relaunching it
 # (Default chosen quite arbitrarily)
@@ -105,7 +93,7 @@ def query_error_handler(func):
       return func(*args, **kwargs)
     except OperationalError as e:
       message = str(e)
-      if '1045' in message: # 'Access denied' # MySQL
+      if '1045' in message:  # 'Access denied' # MySQL
         raise AuthenticationRequired(message=message)
       else:
         raise e
@@ -179,8 +167,13 @@ class SqlAlchemyApi(Api):
     if url.startswith('awsathena+rest://'):
       url = url.replace(url[17:37], urllib_quote_plus(url[17:37]))
       url = url.replace(url[38:50], urllib_quote_plus(url[38:50]))
-      s3_staging_dir = url.rsplit('s3_staging_dir=', 1)[1]
+      parsed = urllib_urlparse(url)
+      s3_staging_dir = urllib_parse_qs(parsed.query)['s3_staging_dir'][0]
       url = url.replace(s3_staging_dir, urllib_quote_plus(s3_staging_dir))
+      work_group = urllib_parse_qs(parsed.query)['work_group'][0]
+      url = url.replace(work_group, urllib_quote_plus(work_group))
+      catalog_name = urllib_parse_qs(parsed.query)['catalog_name'][0]
+      url = url.replace(catalog_name, urllib_quote_plus(catalog_name))
 
     m = re.search(URL_PATTERN, url)
     driver_name = m.group('driver_name')
@@ -222,14 +215,12 @@ class SqlAlchemyApi(Api):
 
     return create_engine(url, **options)
 
-
   def _get_session(self, notebook, snippet):
     for session in notebook['sessions']:
       if session['type'] == snippet['type']:
         return session
 
     return None
-
 
   def _create_connection(self, engine):
     connection = None
@@ -242,7 +233,6 @@ class SqlAlchemyApi(Api):
       raise AuthenticationRequired(message='Could not establish connection to datasource: %s' % e)
 
     return connection
-
 
   @query_error_handler
   def execute(self, notebook, snippet):
@@ -269,6 +259,8 @@ class SqlAlchemyApi(Api):
 
     return {
       'sync': False,
+      'has_result_set': result.cursor != None,
+      'modified_row_count': 0,
       'guid': guid,
       'has_result_set': True,
     }
@@ -318,6 +310,36 @@ class SqlAlchemyApi(Api):
     return statement
 
   @query_error_handler
+  def explain(self, notebook, snippet):
+    session = self._get_session(notebook, snippet)
+    if session is not None:
+      self.options['session'] = session
+
+    engine = self._get_engine()
+    connection = self._create_connection(engine)
+    statement = snippet['statement']
+
+    explanation = ''
+
+    if statement:
+      if self.options['url'].startswith('bigquery://'):
+        explanation = ''
+      else:
+        try:
+          result = connection.execute('EXPLAIN ' + statement)
+          explanation = "\n".join("{}: {},".format(k, v) for row in result for k, v in row.items())
+        except ProgrammingError:
+          pass
+        except Exception as e:
+          LOG.debug('')
+          raise e
+    return {
+      'status': 0,
+      'explanation': explanation,
+      'statement': statement
+    }
+
+  @query_error_handler
   def check_status(self, notebook, snippet):
     guid = snippet['result']['handle']['guid']
     connection = CONNECTIONS.get(guid)
@@ -337,6 +359,24 @@ class SqlAlchemyApi(Api):
       raise QueryExpired()
 
     return response
+
+  @query_error_handler
+  def progress(self, notebook, snippet, logs=''):
+    progress = 50
+    if self.options['url'].startswith('presto://') | self.options['url'].startswith('trino://'):
+      guid = snippet['result']['handle']['guid']
+      handle = CONNECTIONS.get(guid)
+      stats = None
+      progress = 100
+      try:
+        if handle and handle['result'].cursor:
+          stats = handle['result'].cursor.poll()
+      except AssertionError as e:
+        LOG.warning('Query probably not running anymore: %s' % e)
+      if stats:
+        stats = stats.get('stats', {})
+        progress = stats.get('completedSplits', 0) * 100 // stats.get('totalSplits', 1)
+    return progress
 
   @query_error_handler
   def can_start_over(self, notebook, snippet):
@@ -395,7 +435,6 @@ class SqlAlchemyApi(Api):
       'type': 'table'
     }
 
-
   def _assign_types(self, results, meta):
     result = results and results[0]
     if result:
@@ -413,11 +452,9 @@ class SqlAlchemyApi(Api):
         else:
           meta[index]['type'] = 'STRING_TYPE'
 
-
   @query_error_handler
   def fetch_result_metadata(self):
     pass
-
 
   @query_error_handler
   def cancel(self, notebook, snippet):
@@ -437,7 +474,6 @@ class SqlAlchemyApi(Api):
     finally:
       return self.close_statement(notebook, snippet)
 
-
   @query_error_handler
   def get_log(self, notebook, snippet, startFrom=None, size=None):
     return ''
@@ -456,22 +492,6 @@ class SqlAlchemyApi(Api):
     finally:
       return result
 
-  @query_error_handler
-  def explain(self, notebook, snippet):
-    engine = self._create_engine()
-    statement = self._extract_statement(snippet)
-    try:
-      with engine.connect() as connection:
-        result = connection.execute('explain ' + statement)
-        rows = result.fetchall()
-      explanation = '\n'.join(row[0] for row in rows)
-      return {
-        'status': 0,
-        'explanation': explanation,
-        'statement': statement,
-      }
-    finally:
-      engine.dispose()
 
   def close_session(self, session):
     engine = self._get_engine()
@@ -484,11 +504,6 @@ class SqlAlchemyApi(Api):
 
   @query_error_handler
   def autocomplete(self, snippet, database=None, table=None, column=None, nested=None, operation=None):
-    if snippet['type'] == 'phoenix':
-      if database:
-        database = database.upper()
-      if table:
-        table = table.upper()
     engine = self._get_engine()
     inspector = inspect(engine)
 
@@ -534,7 +549,6 @@ class SqlAlchemyApi(Api):
     response['status'] = 0
     return response
 
-
   @query_error_handler
   def get_sample_data(self, snippet, database=None, table=None, column=None, is_async=False, operation=None):
     engine = self._get_engine()
@@ -578,7 +592,6 @@ class SqlAlchemyApi(Api):
         'backticks': self.backticks
     })
 
-
   def _get_column_type_name(self, col):
     try:
       name = str(col.get('type'))
@@ -586,7 +599,6 @@ class SqlAlchemyApi(Api):
       name = col.get('type').__visit_name__.lower()
 
     return name
-
 
   def _fix_bigquery_db_prefixes(self, table_or_column):
     if self.options['url'].startswith('bigquery://'):

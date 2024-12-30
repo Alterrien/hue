@@ -131,8 +131,8 @@ const TEMPLATE =
           <a href="javascript:void(0)" data-bind="visible: activeTables().length > 0, click: function() { uploadTableStats(true) }, attr: { 'title': ('${I18n(
             'Add table'
           )} '  + (isMissingDDL() ? 'DDL' : '') + (isMissingDDL() && isMissingStats() ? ' ${I18n(
-    'and'
-  )} ' : '') + (isMissingStats() ? 'stats' : '')) }">
+            'and'
+          )} ' : '') + (isMissingStats() ? 'stats' : '')) }">
             <i class="fa fa-fw fa-plus-circle"></i> ${I18n('Improve Analysis')}
           </a>
           <!-- /ko -->
@@ -448,7 +448,7 @@ class AssistEditorContextPanel {
                       const tableName =
                         location.identifierChain[location.identifierChain.length - 1].name;
                       const found = tableEntries.some(tableEntry => {
-                        if (tableEntry.name === tableName) {
+                        if (tableEntry.name.toLowerCase() === tableName.toLowerCase()) {
                           const assistTableEntry = new AssistDbEntry(
                             tableEntry,
                             dbEntry,

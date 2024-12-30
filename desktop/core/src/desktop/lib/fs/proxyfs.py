@@ -13,34 +13,23 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-from __future__ import absolute_import
-
-from future import standard_library
-standard_library.install_aliases()
-from builtins import object
 import logging
-import sys
+from builtins import object
+from urllib.parse import urlparse as lib_urlparse
 
 from crequest.middleware import CrequestMiddleware
-from useradmin.models import User
-
-from desktop.auth.backend import is_admin
-from desktop.conf import DEFAULT_USER, ENABLE_ORGANIZATIONS
 
 from aws.conf import is_raz_s3
 from aws.s3.s3fs import get_s3_home_directory
-
+from azure.abfs.__init__ import get_abfs_home_directory
 from azure.conf import is_raz_abfs
-from azure.abfs.__init__ import get_home_dir_for_abfs
+from desktop.auth.backend import is_admin
+from desktop.conf import DEFAULT_USER, ENABLE_ORGANIZATIONS, is_ofs_enabled, is_raz_gs
+from desktop.lib.fs.gc.gs import get_gs_home_directory
+from desktop.lib.fs.ozone import OFS_ROOT
+from useradmin.models import User
 
-if sys.version_info[0] > 2:
-  from urllib.parse import urlparse as lib_urlparse
-else:
-  from urlparse import urlparse as lib_urlparse
-
-
-LOG = logging.getLogger(__name__)
+LOG = logging.getLogger()
 DEFAULT_USER = DEFAULT_USER.get()
 
 
@@ -202,29 +191,41 @@ class ProxyFS(object):
   def restore(self, path):
     self._get_fs(path).restore(path)
 
+  def set_replication(self, src_path, replication_factor):
+    return self._get_fs(src_path).set_replication(src_path, replication_factor)
+
   def create(self, path, *args, **kwargs):
     self._get_fs(path).create(path, *args, **kwargs)
 
+  def get_content_summary(self, path):
+    return self._get_fs(path).get_content_summary(path)
+
+  def trash_path(self, path):
+    return self._get_fs(path).trash_path(path)
+
   def create_home_dir(self, home_path=None):
     """
-    Initially home_path will have path value for HDFS and if it is configured in Hue, try creating the user home dir for it first.
-    Then we check if S3/ABFS is configured in Hue via RAZ. If yes, try creating user home dir for them next.
+    Initially home_path will have path value for HDFS, try creating the user home dir for it first.
+    Then, we check if S3/ABFS is configured via RAZ. If yes, try creating user home dir for them next.
     """
-    from desktop.conf import RAZ # Imported dynamically in order to have proper value.
-
-    if home_path is None:
-      home_path = self.get_home_dir()
+    from desktop.conf import RAZ  # Imported dynamically in order to have proper value.
 
     try:
       self._get_fs(home_path).create_home_dir(home_path)
     except Exception as e:
       LOG.debug('Error creating HDFS home directory for path %s : %s' % (home_path, str(e)))
 
-    # Get the new home_path for S3/ABFS when RAZ is enabled.
+    # All users will have access to Ozone root.
+    if is_ofs_enabled():
+      LOG.debug('Creation of user home path is not supported in Ozone.')
+
+    # Get the new home_path for S3/ABFS/GS when RAZ is enabled.
     if is_raz_s3():
       home_path = get_s3_home_directory(User.objects.get(username=self.getuser()))
     elif is_raz_abfs():
-      home_path = get_home_dir_for_abfs(User.objects.get(username=self.getuser()))
+      home_path = get_abfs_home_directory(User.objects.get(username=self.getuser()))
+    elif is_raz_gs():
+      home_path = get_gs_home_directory(User.objects.get(username=self.getuser()))
 
     # Try getting user from the request and create home dirs. This helps when Hue admin is trying to create the dir for other users.
     # That way only Hue admin needs authorization to create for all Hue users and not each individual user.
@@ -232,7 +233,7 @@ class ProxyFS(object):
     request = CrequestMiddleware.get_request()
     username = request.user.username if request and hasattr(request, 'user') and request.user.is_authenticated else self.getuser()
 
-    if RAZ.AUTOCREATE_USER_DIR.get() and (is_raz_s3() or is_raz_abfs()):
+    if RAZ.AUTOCREATE_USER_DIR.get() and (is_raz_s3() or is_raz_abfs() or is_raz_gs()):
       fs = self.do_as_user(username, self._get_fs, home_path)
       fs.create_home_dir(home_path)
 
@@ -296,8 +297,12 @@ class ProxyFS(object):
   def _rename_star_between_filesystems(self, old, new):
     raise NotImplementedError("Will be addressed in HUE-2934")
 
+  # Deprecated
   def upload(self, file, path, *args, **kwargs):
     self._get_fs(path).upload(file, path, *args, **kwargs)
+
+  def upload_v1(self, META, input_data, destination, username):
+    self._get_fs(destination).upload_v1(META, input_data, destination, username)
 
   def check_access(self, path, *args, **kwargs):
     self._get_fs(path).check_access(path, *args, **kwargs)

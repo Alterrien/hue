@@ -70,7 +70,7 @@ ${ commonheader(_("Workflow Editor"), "Oozie", user, request, "40px") | n,unicod
         %if is_embeddable:
           <li>
             <a href="javascript: void(0)" data-bind="publish: { 'assist.show.documents': 'oozie-workflow2' }">
-              <svg class="hi hi-fw hi-bigger"><use xlink:href="#hi-documents"></use></svg> ${ _('Workflows') }
+              <svg class="hi hi-fw hi-bigger"><use href="#hi-documents"></use></svg> ${ _('Workflows') }
             </a>
           </li>
         %endif
@@ -885,7 +885,9 @@ ${ utils.submit_popup_event() }
 
     huePubSub.subscribe('submit.popup.return', function (data) {
       if (data.type == 'workflow') {
-        $.jHueNotify.info('${_('Workflow submitted.')}');
+        huePubSub.publish('hue.global.info', {
+          message: "${_('Workflow submitted.')}"
+        });
         huePubSub.publish('open.link', '/jobbrowser/#!id=' + data.job_id);
         huePubSub.publish('browser.job.open.link', data.job_id);
         $('.submit-modal').modal('hide');

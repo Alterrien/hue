@@ -17,65 +17,134 @@
 
 from __future__ import absolute_import
 
-from builtins import object
-import inspect
-import json
-import logging
-import mimetypes
-import os.path
+import os
 import re
-import socket
-import sys
-import tempfile
+import json
 import time
+import socket
+import inspect
+import logging
+import os.path
+import secrets
+import tempfile
+import mimetypes
 import traceback
+from builtins import object
+from urllib.parse import quote, urlparse
 
 import kerberos
 import django.db
-import django.views.static
 import django_prometheus
-
+import django.views.static
 from django.conf import settings
 from django.contrib import messages
-from django.contrib.auth import REDIRECT_FIELD_NAME, BACKEND_SESSION_KEY, authenticate, load_backend, login
+from django.contrib.auth import BACKEND_SESSION_KEY, REDIRECT_FIELD_NAME, authenticate, load_backend, login
 from django.contrib.auth.middleware import RemoteUserMiddleware
 from django.core import exceptions
-from django.http import HttpResponseNotAllowed, HttpResponseForbidden
+from django.http import HttpResponse, HttpResponseForbidden, HttpResponseNotAllowed, HttpResponseRedirect
 from django.urls import resolve
-from django.http import HttpResponseRedirect, HttpResponse
 from django.utils.deprecation import MiddlewareMixin
-
-from hadoop import cluster
-from dashboard.conf import IS_ENABLED as DASHBOARD_ENABLED
-from useradmin.models import User
+from django.utils.http import url_has_allowed_host_and_scheme
+from django.utils.translation import gettext as _
 
 import desktop.views
+from dashboard.conf import IS_ENABLED as DASHBOARD_ENABLED
 from desktop import appmanager, metrics
-from desktop.auth.backend import is_admin, find_or_create_user, ensure_has_a_group, rewrite_user
-from desktop.conf import AUTH, HTTP_ALLOWED_METHODS, ENABLE_PROMETHEUS, KNOX, DJANGO_DEBUG_MODE, AUDIT_EVENT_LOG_DIR, \
-    METRICS, SERVER_USER, REDIRECT_WHITELIST, SECURE_CONTENT_SECURITY_POLICY, has_connectors, is_gunicorn_report_enabled
+from desktop.auth.backend import ensure_has_a_group, find_or_create_user, is_admin, knox_login_headers, rewrite_user
+from desktop.conf import (
+  AUDIT_EVENT_LOG_DIR,
+  AUTH,
+  CSP_NONCE,
+  CUSTOM_CACHE_CONTROL,
+  DJANGO_DEBUG_MODE,
+  ENABLE_PROMETHEUS,
+  HTTP_ALLOWED_METHODS,
+  HUE_LOAD_BALANCER,
+  KNOX,
+  METRICS,
+  REDIRECT_WHITELIST,
+  SECURE_CONTENT_SECURITY_POLICY,
+  SERVER_USER,
+  has_connectors,
+  is_gunicorn_report_enabled,
+)
 from desktop.context_processors import get_app_name
-from desktop.lib import apputil, i18n, fsmanager
+from desktop.lib import apputil, fsmanager, i18n
 from desktop.lib.django_util import JsonResponse, render, render_json
 from desktop.lib.exceptions import StructuredException
 from desktop.lib.exceptions_renderable import PopupException
 from desktop.lib.metrics import global_registry
 from desktop.lib.view_util import is_ajax
 from desktop.log import get_audit_logger
-from desktop.log.access import access_log, log_page_hit, access_warn
-
+from desktop.log.access import access_log, access_warn, log_page_hit
+from hadoop import cluster
 from libsaml.conf import CDP_LOGOUT_URL
-
-if sys.version_info[0] > 2:
-  from django.utils.translation import gettext as _
-  from django.utils.http import url_has_allowed_host_and_scheme
-  from urllib.parse import quote
-else:
-  from django.utils.translation import ugettext as _
-  from django.utils.http import is_safe_url as url_has_allowed_host_and_scheme, urlquote as quote
+from useradmin.models import User
 
 
-LOG = logging.getLogger(__name__)
+def nonce_exists(response):
+  """Check for preexisting nonce in style and script.
+
+    Args:
+      response (:obj:): Django response object
+
+    Returns:
+      nonce_found (dict): Dictionary of nonces found
+    """
+  try:
+    csp = response['Content-Security-Policy']
+  except KeyError:
+    csp = response.get('Content-Security-Policy-Report-Only', '')
+
+  nonce_found = {}
+
+  if csp:
+    csp_split = csp.split(';')
+    for directive in csp_split:
+      if 'nonce-' not in directive:
+        continue
+      if 'script-src' in directive:
+        nonce_found['script'] = directive
+      if 'style-src' in directive:
+        nonce_found['style'] = directive
+
+  return nonce_found
+
+
+def get_header(response):
+  """Get the CSP header type.
+
+  This is basically a check for:
+    Content-Security-Policy or Content-Security-Policy-Report-Only
+
+  Args:
+    response (:obj:): Django response object
+
+  Returns:
+    dict:
+      name: CPS header policy. i.e. Report-Only or not
+      csp: CSP directives associated with the header
+      bool: False if neither policy header is found
+  """
+  policies = [
+    "Content-Security-Policy",
+    "Content-Security-Policy-Report-Only"
+  ]
+
+  try:
+    name = policies[0]
+    csp = response[policies[0]]
+  except KeyError:
+    try:
+      name = policies[1]
+      csp = response[policies[1]]
+    except KeyError:
+      return False
+
+  return {'name': name, 'csp': csp}
+
+
+LOG = logging.getLogger()
 
 MIDDLEWARE_HEADER = "X-Hue-Middleware-Response"
 
@@ -88,6 +157,8 @@ DJANGO_VIEW_AUTH_WHITELIST = [
 
 if ENABLE_PROMETHEUS.get():
   DJANGO_VIEW_AUTH_WHITELIST.append(django_prometheus.exports.ExportToDjangoView)
+
+HUE_LB_HOSTS = [urlparse(hue_lb).netloc for hue_lb in HUE_LOAD_BALANCER.get()] if HUE_LOAD_BALANCER.get() else []
 
 
 class AjaxMiddleware(MiddlewareMixin):
@@ -108,7 +179,7 @@ class ExceptionMiddleware(MiddlewareMixin):
   def process_exception(self, request, exception):
     tb = traceback.format_exc()
     logging.info("Processing exception: %s: %s" % (
-      i18n.smart_unicode(exception), i18n.smart_unicode(tb))
+      i18n.smart_str(exception), i18n.smart_str(tb))
     )
 
     if isinstance(exception, PopupException):
@@ -213,7 +284,8 @@ class AppSpecificMiddleware(object):
     ret = None
     for middleware in self._get_middlewares(request._desktop_app, 'view'):
       ret = middleware(request, view_func, view_args, view_kwargs)
-      if ret: return ret  # Short circuit
+      if ret:
+        return ret  # Short circuit
     return ret
 
   def process_response(self, request, response):
@@ -236,7 +308,8 @@ class AppSpecificMiddleware(object):
     ret = None
     for middleware in self._get_middlewares(request._desktop_app, 'exception'):
       ret = middleware(request, exception)
-      if ret: return ret # short circuit
+      if ret:
+        return ret  # short circuit
     return ret
 
   def _load_app_middleware(cls, app):
@@ -252,7 +325,7 @@ class AppSpecificMiddleware(object):
         dot = middleware_path.rindex('.')
       except ValueError:
         raise exceptions.ImproperlyConfigured(_('%(module)s isn\'t a middleware module.') % {'module': middleware_path})
-      mw_module, mw_classname = middleware_path[:dot], middleware_path[dot+1:]
+      mw_module, mw_classname = middleware_path[:dot], middleware_path[dot + 1:]
       try:
         mod = __import__(mw_module, {}, {}, [''])
       except ImportError as e:
@@ -275,7 +348,7 @@ class AppSpecificMiddleware(object):
       # We need to make sure we don't have a process_request function because we don't know what
       # application will handle the request at the point process_request is called
       if hasattr(mw_instance, 'process_request'):
-        raise exceptions.ImproperlyConfigured(_('AppSpecificMiddleware module "%(module)s" has a process_request function' + \
+        raise exceptions.ImproperlyConfigured(_('AppSpecificMiddleware module "%(module)s" has a process_request function' +
               ' which is impossible.') % {'module': middleware_path})
       if hasattr(mw_instance, 'process_view'):
         result['view'].append(mw_instance.process_view)
@@ -311,8 +384,8 @@ class LoginAndPermissionMiddleware(MiddlewareMixin):
     if request.path in ['/oidc/authenticate/', '/oidc/callback/', '/oidc/logout/', '/hue/oidc_failed/']:
       return None
 
-    if AUTH.AUTO_LOGIN_ENABLED.get() and request.path.startswith('/api/token/auth'):
-      pass # allow /api/token/auth can create user or make it active
+    if AUTH.AUTO_LOGIN_ENABLED.get() and request.path.startswith('/api/v1/token/auth'):
+      pass  # allow /api/token/auth can create user or make it active
     elif request.path.startswith('/api/'):
       return None
 
@@ -406,7 +479,7 @@ class LoginAndPermissionMiddleware(MiddlewareMixin):
               REDIRECT_FIELD_NAME,
               quote('/hue' + request.get_full_path().replace('is_embeddable=true', '').replace('&&', '&'))
           )
-        }) # Remove embeddable so redirect from & to login works. Login page is not embeddable
+        })  # Remove embeddable so redirect from & to login works. Login page is not embeddable
       else:
         return HttpResponseRedirect("%s?%s=%s" % (settings.LOGIN_URL, REDIRECT_FIELD_NAME, quote(request.get_full_path())))
 
@@ -484,117 +557,11 @@ class AuditLoggingMiddleware(MiddlewareMixin):
     return allowed
 
 
-try:
-  import tidylib
-  _has_tidylib = True
-except Exception as ex:
-  # The exception type is not ImportError. It's actually an OSError.
-  logging.warn("Failed to import tidylib (for debugging). Is libtidy installed?")
-  _has_tidylib = False
-
-
-class HtmlValidationMiddleware(MiddlewareMixin):
-  """
-  If configured, validate output html for every response.
-  """
-  def __init__(self, get_response):
-    self.get_response = get_response
-    self._logger = logging.getLogger('HtmlValidationMiddleware')
-
-    if not _has_tidylib:
-      logging.error("HtmlValidationMiddleware not activatived: Failed to import tidylib.")
-      return
-
-    # Things that we don't care about
-    self._to_ignore = (
-      re.compile('- Warning: <.*> proprietary attribute "data-'),
-      re.compile('- Warning: trimming empty'),
-      re.compile('- Info:'),
-    )
-
-    # Find the directory to write tidy html output
-    try:
-      self._outdir = os.path.join(tempfile.gettempdir(), 'hue_html_validation')
-      if not os.path.isdir(self._outdir):
-        os.mkdir(self._outdir, 0o755)
-    except Exception as ex:
-      self._logger.exception('Failed to get temp directory: %s', (ex,))
-      self._outdir = tempfile.mkdtemp(prefix='hue_html_validation-')
-
-    # Options to pass to libtidy. See
-    # http://tidy.sourceforge.net/docs/quickref.html
-    self._options = {
-      'show-warnings': 1,
-      'output-html': 0,
-      'output-xhtml': 1,
-      'char-encoding': 'utf8',
-      'output-encoding': 'utf8',
-      'indent': 1,
-      'wrap': 0,
-    }
-
-  def process_response(self, request, response):
-
-    if not _has_tidylib or not self._is_html(request, response):
-      return response
-
-    html, errors = tidylib.tidy_document(response.content,
-                                         self._options,
-                                         keep_doc=True)
-    if not errors:
-      return response
-
-    # Filter out what we care about
-    err_list = errors.rstrip().split('\n')
-    err_list = self._filter_warnings(err_list)
-    if not err_list:
-      return response
-
-    try:
-      fn = resolve(request.path)[0]
-      fn_name = '%s.%s' % (fn.__module__, fn.__name__)
-    except:
-      LOG.exception('failed to resolve url')
-      fn_name = '<unresolved_url>'
-
-    # Write the two versions of html out for offline debugging
-    filename = os.path.join(self._outdir, fn_name)
-
-    result = "HTML tidy result: %s [%s]:" \
-             "\n\t%s" \
-             "\nPlease see %s.orig %s.tidy\n-------" % \
-             (request.path, fn_name, '\n\t'.join(err_list), filename, filename)
-
-    file(filename + '.orig', 'w').write(i18n.smart_str(response.content))
-    file(filename + '.tidy', 'w').write(i18n.smart_str(html))
-    file(filename + '.info', 'w').write(i18n.smart_str(result))
-
-    self._logger.error(result)
-
-    return response
-
-  def _filter_warnings(self, err_list):
-    """A hacky way to filter out things that we don't care about."""
-    res = []
-    for err in err_list:
-      for ignore in self._to_ignore:
-        if ignore.search(err):
-          break
-      else:
-        res.append(err)
-    return res
-
-  def _is_html(self, request, response):
-    return not is_ajax(request) and \
-        'html' in response['Content-Type'] and \
-        200 <= response.status_code < 300
-
-
 class ProxyMiddleware(MiddlewareMixin):
 
   def __init__(self, get_response):
     self.get_response = get_response
-    if not 'desktop.auth.backend.AllowAllBackend' in AUTH.BACKEND.get():
+    if 'desktop.auth.backend.AllowAllBackend' not in AUTH.BACKEND.get():
       LOG.info('Unloading ProxyMiddleware')
       raise exceptions.MiddlewareNotUsed
 
@@ -631,7 +598,7 @@ class ProxyMiddleware(MiddlewareMixin):
           'operationText': msg
         }
         return
-      except:
+      except Exception:
         LOG.exception('Unexpected error when authenticating')
         return
 
@@ -726,14 +693,14 @@ class SpnegoMiddleware(MiddlewareMixin):
             principal = self.clean_principal(username)
             if principal.intersection(principals):
               # This may contain chain of reverse proxies, e.g. knox proxy, hue load balancer
-              # Compare hostname on both HTTP_X_FORWARDED_HOST & KNOX_PROXYHOSTS.
+              # Compare hostname on both HTTP_X_FORWARDED_HOST & KNOX_PROXYHOSTS+HUE_LB.
               # Both of these can be configured to use either hostname or IPs and we have to normalize to one or the other
               req_hosts = self.clean_host(request.META['HTTP_X_FORWARDED_HOST'])
-              knox_proxy = self.clean_host(KNOX.KNOX_PROXYHOSTS.get())
-              if req_hosts.intersection(knox_proxy):
+              allowed_hosts = self.clean_host(KNOX.KNOX_PROXYHOSTS.get() + HUE_LB_HOSTS)
+              if req_hosts.intersection(allowed_hosts):
                 knox_verification = True
               else:
-                access_warn(request, 'Failed to verify provided host %s with %s ' % (req_hosts, knox_proxy))
+                access_warn(request, 'Failed to verify provided host %s with %s ' % (req_hosts, allowed_hosts))
             else:
               access_warn(request, 'Failed to verify provided username %s with %s ' % (principal, principals))
             # If knox authentication failed then generate 401 (Unauthorized error)
@@ -749,6 +716,7 @@ class SpnegoMiddleware(MiddlewareMixin):
           if user:
             request.user = user
             login(request, user)
+            knox_login_headers(request)
             msg = 'Successful login for user: %s' % request.user.username
           else:
             msg = 'Failed login for user: %s' % request.user.username
@@ -759,7 +727,7 @@ class SpnegoMiddleware(MiddlewareMixin):
           }
           access_warn(request, msg)
           return
-        except:
+        except Exception:
           LOG.exception('Unexpected error when authenticating against KDC')
           return
       else:
@@ -826,7 +794,7 @@ class HueRemoteUserMiddleware(RemoteUserMiddleware):
   in use.
   """
   def __init__(self, get_response):
-    if not 'desktop.auth.backend.RemoteUserDjangoBackend' in AUTH.BACKEND.get():
+    if 'desktop.auth.backend.RemoteUserDjangoBackend' not in AUTH.BACKEND.get():
       LOG.info('Unloading HueRemoteUserMiddleware')
       raise exceptions.MiddlewareNotUsed
     super().__init__(get_response)
@@ -869,6 +837,7 @@ class EnsureSafeRedirectURLMiddleware(MiddlewareMixin):
     else:
       return response
 
+
 class MetricsMiddleware(MiddlewareMixin):
   """
   Middleware to track the number of active requests.
@@ -902,9 +871,51 @@ class ContentSecurityPolicyMiddleware(MiddlewareMixin):
       LOG.info('Unloading ContentSecurityPolicyMiddleware')
       raise exceptions.MiddlewareNotUsed
 
+  def process_request(self, request):
+    nonce = secrets.token_urlsafe()
+    request.csp_nonce = nonce
+
   def process_response(self, request, response):
-    if self.secure_content_security_policy and not 'Content-Security-Policy' in response:
+    # If CSP_NONCE is not set, return the response without modification
+    if not CSP_NONCE.get():
+      return response
+
+    # Add the secure CSP if it doesn't exist, provided that we have a CSP to set
+    if self.secure_content_security_policy and 'Content-Security-Policy' not in response:
       response["Content-Security-Policy"] = self.secure_content_security_policy
+
+    # If the CSP header is not set or the request does not have a nonce, return the response
+    header = get_header(response)
+    if not header or not hasattr(request, 'csp_nonce'):
+      return response
+
+    # If a nonce already exists in the CSP header, log an error and return the response
+    nonce_found = nonce_exists(response)
+    if nonce_found:
+      LOG.error("Nonce already exists: {}".format(nonce_found))
+      return response
+
+    # Retrieve the nonce from the request and prepare the new CSP directive
+    nonce = getattr(request, 'csp_nonce', None)
+    csp_split = header['csp'].split(';')
+    new_csp = []
+    nonce_directive = f"'nonce-{nonce}'"
+
+    for p in csp_split:
+      directive = p.lstrip().split(' ')[0]
+      if directive in ('script-src'):
+        # Remove 'unsafe-inline' if present
+        new_directive_parts = [
+            part for part in p.split(' ')
+            if part and part not in ("'unsafe-inline'")
+        ]
+        new_directive_parts.append(nonce_directive)
+        new_csp.append(' '.join(new_directive_parts))
+      else:
+        new_csp.append(p)
+
+    # Update the Content-Security-Policy header with the new CSP string
+    response[header['name']] = "; ".join(new_csp).strip() + ';'
 
     return response
 
@@ -928,6 +939,7 @@ class MimeTypeJSFileFixStreamingMiddleware(MiddlewareMixin):
 
     return response
 
+
 class MultipleProxyMiddleware:
   FORWARDED_FOR_FIELDS = [
     'HTTP_X_FORWARDED_FOR',
@@ -943,9 +955,41 @@ class MultipleProxyMiddleware:
     Rewrites the proxy headers so that only the most
     recent proxy is used.
     """
+    location = -1
+
+    if 'HTTP_X_REAL_IP' in request.META:
+      if 'HTTP_X_FORWARDED_FOR' in request.META and \
+        request.META['HTTP_X_REAL_IP'] in request.META['HTTP_X_FORWARDED_FOR']:
+        location = 0
+        for item in request.META['HTTP_X_FORWARDED_FOR'].split(','):
+          if request.META['HTTP_X_REAL_IP'].strip() != item.strip():
+            location += 1
+          else:
+            request.META['HTTP_X_FORWARDED_FOR'] = item.strip()
+            break
+
     for field in self.FORWARDED_FOR_FIELDS:
       if field in request.META:
         if ',' in request.META[field]:
           parts = request.META[field].split(',')
-          request.META[field] = parts[-1].strip()
+          request.META[field] = parts[location].strip()
+
+    if 'HTTP_X_FORWARDED_FOR' not in request.META and 'REMOTE_ADDR' in request.META:
+      request.META['HTTP_X_FORWARDED_FOR'] = request.META['REMOTE_ADDR']
     return self.get_response(request)
+
+
+class CacheControlMiddleware(MiddlewareMixin):
+  def __init__(self, get_response):
+    self.get_response = get_response
+    self.custom_cache_control = CUSTOM_CACHE_CONTROL.get()
+    if not self.custom_cache_control:
+      LOG.info('Unloading CacheControlMiddleware')
+      raise exceptions.MiddlewareNotUsed
+
+  def process_response(self, request, response):
+    if self.custom_cache_control:
+      response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+      response['Pragma'] = 'no-cache'
+      response['Expires'] = '0'
+    return response

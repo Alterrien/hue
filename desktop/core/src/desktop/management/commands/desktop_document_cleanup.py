@@ -15,28 +15,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import desktop.conf
-import desktop.conf
-import logging.handlers
 import os
 import sys
 import time
-from beeswax.models import SavedQuery
-from beeswax.models import Session
+import logging.handlers
 from datetime import date, timedelta
-from desktop.models import Document2
+from importlib import import_module
+
 from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.db.utils import DatabaseError
-from importlib import import_module
-from oozie.models import Workflow
 
-if sys.version_info[0] > 2:
-  from django.utils.translation import gettext_lazy as _t, gettext as _
-else:
-  from django.utils.translation import ugettext_lazy as _t, ugettext as _
+import desktop.conf
+from beeswax.models import SavedQuery, Session
+from desktop.models import Document2
+from desktop.settings import INSTALLED_APPS
 
-LOG = logging.getLogger(__name__)
+if 'oozie' in INSTALLED_APPS:
+  from oozie.models import Workflow
+
+from django.utils.translation import gettext as _, gettext_lazy as _t
+
+LOG = logging.getLogger()
 
 
 class Command(BaseCommand):
@@ -72,7 +72,7 @@ class Command(BaseCommand):
     deleteRecords = self.deleteRecordsBase
 
     totalObjects = objClass.objects.filter(
-      **{'%s' % filterType: filterValue, '%s__lte' % dateField: self.timeDeltaObj,}) \
+      **{'%s' % filterType: filterValue, '%s__lte' % dateField: self.timeDeltaObj, }) \
       .values_list("id", flat=True)
     LOG.info("Looping through %s objects. %s objects to be deleted." % (objClass.__name__, totalObjects.count()))
     while totalObjects.count():
@@ -84,7 +84,7 @@ class Command(BaseCommand):
         checkCount = 0
       LOG.info("%s objects left: %s" % (objClass.__name__, totalObjects.count()))
       deleteObjects = objClass.objects.filter(
-        **{'%s' % filterType: filterValue, '%s__lte' % dateField: self.timeDeltaObj,}) \
+        **{'%s' % filterType: filterValue, '%s__lte' % dateField: self.timeDeltaObj, }) \
                         .values_list("id", flat=True)[:deleteRecords]
       try:
         objClass.objects.filter(pk__in=list(deleteObjects)).delete()
@@ -100,7 +100,7 @@ class Command(BaseCommand):
           deleteRecords = max(deleteRecords - 10, 1)
         LOG.info("Decreasing max delete records to: %s" % deleteRecords)
       totalObjects = objClass.objects.filter(
-        **{'%s' % filterType: filterValue, '%s__lte' % dateField: self.timeDeltaObj,}) \
+        **{'%s' % filterType: filterValue, '%s__lte' % dateField: self.timeDeltaObj, }) \
         .values_list("id", flat=True)
 
   def handle(self, *args, **options):
@@ -129,17 +129,18 @@ class Command(BaseCommand):
     # Clear out old Hive/Impala sessions
     self.objectCleanup(Session, 'status_code__gte', -10000, 'last_used')
 
-    # Clean out Trashed Workflows
-    try:
-      self.objectCleanup(Workflow, 'is_trashed', True, 'last_modified')
-    except NameError as NE:
-      LOG.info('Oozie app is not configured to clean out trashed workflows')
+    if 'oozie' in INSTALLED_APPS:  # check if oozie is enabled
+      # Clean out Trashed Workflows
+      try:
+        self.objectCleanup(Workflow, 'is_trashed', True, 'last_modified')
+      except NameError as NE:
+        LOG.info('Oozie app is not configured to clean out trashed workflows')
 
-    # Clean out Workflows without a name
-    try:
-      self.objectCleanup(Workflow, 'name', '', 'last_modified')
-    except NameError as NE:
-      LOG.info('Oozie app is not configured to clean out workflows without a name')
+      # Clean out Workflows without a name
+      try:
+        self.objectCleanup(Workflow, 'name', '', 'last_modified')
+      except NameError as NE:
+        LOG.info('Oozie app is not configured to clean out workflows without a name')
 
     # Clean out history Doc2 objects
     self.objectCleanup(Document2, 'is_history', True, 'last_modified')

@@ -83,20 +83,15 @@ fi
 
 export PATH=$(dirname $ENV_PYTHON):$PATH
 
-PYVER=$($ENV_PYTHON -V 2>&1|head -c 10)
+PYVER=$($ENV_PYTHON -V 2>&1 | awk '{print $2}' | cut -d '.' -f 1,2)
 # Step 1. Fix virtualenv
-if [[ $PYVER == "Python 3.8" ]]; then
+if [[ "$PYVER" == "3."[8-9]* || "$PYVER" == "3.10" ]]; then
+  echo "Python version is 3.8 or greater"
   pushd .
   cd $HUE_ROOT
   virtualenv-make-relocatable "build/env"
   $ENV_PYTHON $VIRTUAL_BOOTSTRAP --relocatable_pth "build/env"
   popd
-elif [[ $PYVER == "Python 2.7" ]]; then
-  if [ -e "$HUE_ROOT/tools/enable-python27.sh" ]; then
-    source $HUE_ROOT/tools/enable-python27.sh
-  fi
-
-  $ENV_PYTHON $VIRTUAL_BOOTSTRAP --relocatable "$HUE_ROOT/build/env"
 fi
 
 # Step 1b. Fix any broken lib64 directory
