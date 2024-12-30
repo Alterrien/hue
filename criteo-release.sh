@@ -12,7 +12,7 @@ source VERSION
 GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 LAST_COMMIT_ID=$(git rev-parse --short HEAD)
 DATE=$(date -u +%Y%m%d%H%M%S)
-CRITEO_VERSION=$VERSION+$DATE.$LAST_COMMIT_ID
+CRITEO_VERSION=$VERSION-$DATE-$LAST_COMMIT_ID
 
 # Build release environment Docker image
 docker build . -t hue-dev -f tools/docker/dev/Dockerfile
@@ -28,7 +28,7 @@ popd
 # Release to Nexus
 if [ ! -z $MAVEN_PASSWORD ]; then
     curl -v -u "$MAVEN_USER:$MAVEN_PASSWORD" --upload-file build/release/prod/hue-*.tgz ${NEXUS_URL}/hue/$CRITEO_VERSION/hue-$CRITEO_VERSION.tgz
-    curl -v -u "$MAVEN_USER:$MAVEN_PASSWORD" --upload-file build/static/hue-static*.tgz ${NEXUS_URL}/hue-static/$CRITEO_VERSION/hue-static-$CRITEO_VERSION.tgz
+    curl -v -u "$MAVEN_USER:$MAVEN_PASSWORD" --upload-file build/hue-static*.tgz ${NEXUS_URL}/hue-static/$CRITEO_VERSION/hue-static-$CRITEO_VERSION.tgz
     cat << EOF > maven-metadata-hue.xml
 <?xml version="1.0" encoding="UTF-8"?>
 <metadata>
