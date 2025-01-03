@@ -259,7 +259,6 @@ class SqlAlchemyApi(Api):
 
     return {
       'sync': False,
-      'has_result_set': result.cursor != None,
       'modified_row_count': 0,
       'guid': guid,
       'has_result_set': True,
@@ -369,7 +368,7 @@ class SqlAlchemyApi(Api):
       stats = None
       progress = 100
       try:
-        if handle and handle['result'].cursor:
+        if handle and 'result' in handle and handle['result'].cursor:
           stats = handle['result'].cursor.poll()
       except AssertionError as e:
         LOG.warning('Query probably not running anymore: %s' % e)
@@ -550,7 +549,7 @@ class SqlAlchemyApi(Api):
     return response
 
   @query_error_handler
-  def get_sample_data(self, snippet, database=None, table=None, column=None, is_async=False, operation=None):
+  def get_sample_data(self, snippet, database=None, table=None, column=None, nested=None, is_async=False, operation=None):
     engine = self._get_engine()
     inspector = inspect(engine)
 

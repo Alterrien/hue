@@ -602,7 +602,7 @@ class Api(object):
   def get_jobs(self, notebook, snippet, logs):
     return []
 
-  def get_sample_data(self, snippet, database=None, table=None, column=None, is_async=False, operation=None):
+  def get_sample_data(self, snippet, database=None, table=None, column=None, nested=None, is_async=False, operation=None):
     raise NotImplementedError()
 
   def export_data_as_hdfs_file(self, snippet, target_file, overwrite):
