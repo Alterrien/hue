@@ -82,7 +82,7 @@ class Jdbc(object):
     try:
       self.connect()
       return True
-    except Exception, e:
+    except Exception as e:
       message = force_unicode(smart_str(e)).lower()
       access_denied_words = ['access denied', 'authentication failed']
       if throw_exception:

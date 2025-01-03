@@ -519,7 +519,7 @@ class SparkApi(Api):
 
       return cols
 
-  def get_sample_data(self, snippet, database=None, table=None, column=None, is_async=False, operation=None):
+  def get_sample_data(self, snippet, database=None, table=None, column=None, nested=None, is_async=False, operation=None):
     api = self.get_api()
     response = {
       'status': 0,
