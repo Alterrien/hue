@@ -1,0 +1,4 @@
+sqlalchemy-vertica-python==0.6.3
+vertica-python==0.10.4
+pyhive==0.6.2
+mysqlclient==1.4.6
