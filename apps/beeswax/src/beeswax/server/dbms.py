@@ -294,7 +294,7 @@ def get_query_server_config(name='beeswax', connector=None):
           nodes = get_nodes_from_consul(consul)
 
           if nodes:
-            current_hs2 = json.loads(cache.get("hiveserver2"))
+            current_hs2 = json.loads(activeEndpoint)
             current_hs2_found_in_active_nodes = next((node for node in nodes if current_hs2['host'] == node[0] and current_hs2['port'] == node[1]), None)
             if current_hs2_found_in_active_nodes is None:
               LOG.error('Current HiveServer is down, selecting another available HiveServer from consul')
